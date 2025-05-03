@@ -211,7 +211,7 @@ terraform {
    resource "random_string" "suffix" {
      length  = 8
      special = false
-     upper   = false 
+     upper   = false
    }
 
    # Route 53
@@ -285,8 +285,4 @@ terraform {
 
    output "jenkins_url" {
      value = "http://jenkins.${var.domain_name}:8080"
-   }
-
-   output "jenkins_public_ip" {
-     value = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? data.aws_instances.jenkins_instances.public_ips[0] : "No instance running"
    }
