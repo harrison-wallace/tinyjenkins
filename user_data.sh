@@ -21,12 +21,13 @@ echo "[local]" > /etc/ansible/hosts
 echo "localhost ansible_connection=local" >> /etc/ansible/hosts
 
 # Schedule backup with validation
+echo "BACKUP_BUCKET='${backup_bucket}'" >> /var/log/user-data.log
 if [ -z "${backup_bucket}" ]; then
-  echo "Error: BACKUP_BUCKET not set" >> /var/log/user-data.log
-  exit 1
+  echo "Warning: BACKUP_BUCKET not set, skipping backup scheduling" >> /var/log/user-data.log
+else
+  echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
+  echo "0 2 * * * root /usr/local/bin/ansible-playbook /etc/ansible/backup.yml" >> /etc/crontab
 fi
-echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
-echo "0 2 * * * root /usr/local/bin/ansible-playbook /etc/ansible/backup.yml" >> /etc/crontab
 
 # Log user-data execution
 echo "user-data script completed at $(date)" >> /var/log/user-data.log
