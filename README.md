@@ -74,7 +74,7 @@
         export TF_VAR_allowed_cidr=<your-cidr>
         export TF_VAR_key_name=jenkins-key
         export TF_VAR_alert_email=you@example.com
-        terraform init
+        terraform init -backend-config="bucket=my-terraform-state-bucket" -backend-config="region=us-east-1"
         terraform destroy
         ```
 

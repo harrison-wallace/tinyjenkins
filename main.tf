@@ -6,9 +6,9 @@ terraform {
        }
      }
      backend "s3" {
-       bucket         = var.state_bucket
+       bucket         = "placeholder-bucket" # Overridden by -backend-config in GitHub Actions
        key            = "jenkins/terraform.tfstate"
-       region         = var.region
+       region         = "us-east-1"         # Overridden by -backend-config in GitHub Actions
        dynamodb_table = "terraform-locks"
      }
    }
