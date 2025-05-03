@@ -15,11 +15,15 @@
 
    ## Prerequisites
    - **AWS Account**: With IAM user credentials (EC2, S3, Route 53, CloudWatch, SNS, IAM permissions).
-   - **SSH Key Pair**: Created in EC2 for your region (e.g., `us-east-1`).
+   - **SSH Key Pair**:
+     - Create an EC2 key pair in your AWS region (e.g., `us-east-1`):
+       1. Go to the AWS EC2 Console > Key Pairs.
+       2. Click "Create key pair".
+       3. Name it (e.g., `jenkins-key`), select "RSA" and "PEM" format, and create.
+       4. Download the private key file (e.g., `jenkins-key.pem`) and store it securely.
+     - Verify the key pair exists in the region specified by `TF_VAR_region` (default: `us-east-1`).
    - **Route 53 Domain**: A domain managed in AWS Route 53 (e.g., `yourdomain.com`).
    - **GitHub Repository**: Public or private, with Actions enabled.
-   - **S3 Bucket**:
-     - Bucket for Terraform state (e.g., `my-terraform-state-bucket`).
 
    ## Setup Instructions
    1. **Clone or Create Repository**:
@@ -92,6 +96,8 @@
    - S3 backups are encrypted with AES256.
    - SSH access (port 22) is restricted to `TF_VAR_allowed_cidr`.
    - Jenkins (port 8080) is accessible via Route 53 DNS (consider HTTPS for production).
+   - State locking is disabled for single-user use; enable DynamoDB locking for multi-user scenarios.
+   - Sensitive Terraform outputs (e.g., Jenkins URL, domain name) are masked in GitHub Actions logs using `::add-mask::`.
 
    ## Troubleshooting
    - **Workflow Fails**: Check GitHub Actions logs for Terraform or SSH errors.
