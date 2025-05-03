@@ -87,11 +87,11 @@ jobs:
           echo "Security group with tag Name=jenkins-sg not found"
           exit 1
         fi
-        # Allow SSH from GitHub Actions runners (using a broad range for simplicity; refine as needed)
+        # Allow SSH from GitHub Actions runners (broad range for simplicity)
         aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager
         echo "SECURITY_GROUP_ID=$SECURITY_GROUP_ID" >> $GITHUB_ENV
     - name: Copy Ansible Playbooks
-      timeout-minutes: 5
+      timeout-minutes: 10
       env:
         EC2_IP: $(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -105,15 +105,19 @@ jobs:
         fi
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
-        # Wait for SSH to be available (up to 20 attempts, 15s apart)
-        for i in {1..20}; do
+        # Wait for SSH to be available (up to 5 attempts, 15s apart)
+        for i in {1..5}; do
           if ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; then
             break
           fi
           echo "Waiting for SSH to be available... Attempt $i"
           sleep 15
-          if [ $i -eq 20 ]; then
-            echo "SSH not available after 20 attempts"
+          if [ $i -eq 5 ]; then
+            echo "SSH not available after 5 attempts"
+            # Fetch console output for debugging
+            aws ec2 get-console-output --instance-id $INSTANCE_ID --query 'Output' --output text --no-cli-pager > console_output.txt
+            echo "Instance console output (last 1000 characters):"
+            tail -c 1000 console_output.txt
             exit 1
           fi
         done
