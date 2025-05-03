@@ -291,3 +291,7 @@ terraform {
    output "jenkins_url" {
      value = "http://jenkins.${var.domain_name}:8080"
    }
+
+   output "public_ip" {
+     value = local.public_ip
+   }
