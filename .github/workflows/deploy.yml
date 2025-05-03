@@ -76,7 +76,22 @@ jobs:
         fi
         echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
         aws ec2 wait instance-running --instance-ids $INSTANCE_ID --no-cli-pager
+    - name: Allow GitHub Actions SSH Access
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
+      run: |
+        SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Name,Values=jenkins-sg" --query 'SecurityGroups[0].GroupId' --output text --no-cli-pager)
+        if [ -z "$SECURITY_GROUP_ID" ] || [ "$SECURITY_GROUP_ID" == "None" ]; then
+          echo "Security group with tag Name=jenkins-sg not found"
+          exit 1
+        fi
+        # Allow SSH from GitHub Actions runners (using a broad range for simplicity; refine as needed)
+        aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager
+        echo "SECURITY_GROUP_ID=$SECURITY_GROUP_ID" >> $GITHUB_ENV
     - name: Copy Ansible Playbooks
+      timeout-minutes: 5
       env:
         EC2_IP: $(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -90,18 +105,28 @@ jobs:
         fi
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
-        # Wait for SSH to be available (up to 10 attempts, 10s apart)
-        for i in {1..10}; do
+        # Wait for SSH to be available (up to 20 attempts, 15s apart)
+        for i in {1..20}; do
           if ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; then
             break
           fi
           echo "Waiting for SSH to be available... Attempt $i"
-          sleep 10
-          if [ $i -eq 10 ]; then
-            echo "SSH not available after 10 attempts"
+          sleep 15
+          if [ $i -eq 20 ]; then
+            echo "SSH not available after 20 attempts"
             exit 1
           fi
         done
         # Copy playbooks
         scp -o StrictHostKeyChecking=no -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
         ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "sudo mv /home/ec2-user/playbooks /etc/ansible/ && sudo ansible-playbook /etc/ansible/jenkins.yml"
+    - name: Revert Security Group SSH Access
+      if: always()
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
+      run: |
+        if [ -n "$SECURITY_GROUP_ID" ]; then
+          aws ec2 revoke-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager || true
+        fi
