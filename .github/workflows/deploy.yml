@@ -63,37 +63,44 @@ jobs:
       run: |
         echo "::add-mask::$(terraform output -raw jenkins_url)"
         echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
-    - name: Verify Instance Exists
+    - name: Get Instance ID and Wait for Running State
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
-        aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" --query 'Reservations[].Instances[].{InstanceId:InstanceId, PublicIp:PublicIpAddress, State:Name}' --output text
-    - name: Wait for Instance to be Running
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_region }}
-      run: |
-        aws ec2 wait instance-running --filters "Name=tag:Name,Values=Jenkins-Spot"
+        INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=pending,running" --query 'Reservations[0].Instances[0].InstanceId' --output text --no-cli-pager)
+        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+          echo "No running or pending instance found with tag Name=Jenkins-Spot"
+          exit 1
+        fi
+        echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+        aws ec2 wait instance-running --instance-ids $INSTANCE_ID --no-cli-pager
     - name: Copy Ansible Playbooks
       env:
-        EC2_IP: $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+        EC2_IP: $(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
-        if [ -z "$EC2_IP" ]; then
-          echo "No public IP found for instance with tag Name=Jenkins-Spot"
+        if [ -z "$EC2_IP" ] || [ "$EC2_IP" == "None" ]; then
+          echo "No public IP found for instance $INSTANCE_ID"
           exit 1
         fi
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
-        # Wait for SSH to be available
-        until ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; do
-          sleep 5
+        # Wait for SSH to be available (up to 10 attempts, 10s apart)
+        for i in {1..10}; do
+          if ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; then
+            break
+          fi
+          echo "Waiting for SSH to be available... Attempt $i"
+          sleep 10
+          if [ $i -eq 10 ]; then
+            echo "SSH not available after 10 attempts"
+            exit 1
+          fi
         done
         # Copy playbooks
         scp -o StrictHostKeyChecking=no -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
