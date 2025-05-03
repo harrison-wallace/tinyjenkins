@@ -1,0 +1,32 @@
+---
+   - name: Configure Jenkins
+     hosts: localhost
+     tasks:
+       - name: Wait for Jenkins to be ready
+         uri:
+           url: http://localhost:8080
+           status_code: 200
+           return_content: yes
+         register: result
+         until: result.status == 200
+         retries: 30
+         delay: 10
+
+       - name: Install Jenkins CLI
+         get_url:
+           url: http://localhost:8080/jnlpJars/jenkins-cli.jar
+           dest: /usr/local/bin/jenkins-cli.jar
+           mode: '0755'
+
+       - name: Install plugins
+         command: java -jar /usr/local/bin/jenkins-cli.jar -s http://localhost:8080 install-plugin {{ item }}
+         loop:
+           - git
+           - pipeline
+           - credentials
+         register: plugin_install
+         changed_when: "'Installed' in plugin_install.stdout"
+
+       - name: Restart Jenkins after plugin installation
+         command: java -jar /usr/local/bin/jenkins-cli.jar -s http://localhost:8080 safe-restart
+         when: plugin_install.changed

@@ -1,0 +1,18 @@
+---
+   - name: Backup Jenkins to S3
+     hosts: localhost
+     tasks:
+       - name: Create backup archive
+         command: tar -czf /tmp/jenkins_backup.tar.gz -C /var/jenkins_home .
+         args:
+           creates: /tmp/jenkins_backup.tar.gz
+
+       - name: Upload backup to S3
+         aws_s3:
+           bucket: "{{ lookup('env', 'BACKUP_BUCKET') }}"
+           object: "backups/jenkins_backup_{{ ansible_date_time.iso8601 }}.tar.gz"
+           src: /tmp/jenkins_backup.tar.gz
+           mode: put
+         environment:
+           AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+           AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
