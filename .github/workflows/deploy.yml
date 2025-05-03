@@ -63,14 +63,38 @@ jobs:
       run: |
         echo "::add-mask::$(terraform output -raw jenkins_url)"
         echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
+    - name: Verify Instance Exists
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
+      run: |
+        aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" --query 'Reservations[].Instances[].{InstanceId:InstanceId, PublicIp:PublicIpAddress, State:Name}' --output text
+    - name: Wait for Instance to be Running
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
+      run: |
+        aws ec2 wait instance-running --filters "Name=tag:Name,Values=Jenkins-Spot"
     - name: Copy Ansible Playbooks
       env:
-        EC2_IP: $(echo "local.public_ip" | terraform console -no-color | tr -d '"')
+        EC2_IP: $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
+        if [ -z "$EC2_IP" ]; then
+          echo "No public IP found for instance with tag Name=Jenkins-Spot"
+          exit 1
+        fi
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
+        # Wait for SSH to be available
+        until ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; do
+          sleep 5
+        done
+        # Copy playbooks
         scp -o StrictHostKeyChecking=no -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
         ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "sudo mv /home/ec2-user/playbooks /etc/ansible/ && sudo ansible-playbook /etc/ansible/jenkins.yml"
