@@ -98,4 +98,5 @@
    ## Troubleshooting
    - **Workflow Fails**: Check GitHub Actions logs for Terraform or SSH errors.
    - **Route 53 Issues**: Verify NS records and hosted zone in AWS.
-   - **Jenkins Unreachable**: Ensure security group allows port 8080 and instance is running.
+   - **Jenkins Unreachable**: Ensure security group allows port 8080 and instance is running. 
+    - Check your IP is correct in `TF_VAR_allowed_cidr`
