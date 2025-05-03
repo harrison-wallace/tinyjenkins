@@ -14,13 +14,12 @@
    - **S3**: Stores Terraform state and Jenkins backups.
 
    ## Prerequisites
-   - **AWS Account**: With IAM user credentials (EC2, S3, DynamoDB, Route 53, CloudWatch, SNS, IAM permissions).
+   - **AWS Account**: With IAM user credentials (EC2, S3, Route 53, CloudWatch, SNS, IAM permissions).
    - **SSH Key Pair**: Created in EC2 for your region (e.g., `us-east-1`).
    - **Route 53 Domain**: A domain managed in AWS Route 53 (e.g., `yourdomain.com`).
    - **GitHub Repository**: Public or private, with Actions enabled.
-   - **S3 Bucket and DynamoDB Table**:
+   - **S3 Bucket**:
      - Bucket for Terraform state (e.g., `my-terraform-state-bucket`).
-     - DynamoDB table for state locking (e.g., `terraform-locks`, partition key: `LockID`).
 
    ## Setup Instructions
    1. **Clone or Create Repository**:
@@ -81,12 +80,11 @@
    ## Cost Estimate
    - EC2 Spot (t3.micro): ~$2.19/month.
    - S3 (state + backups): ~$0.14/month.
-   - DynamoDB (state locking): ~$0.25/month.
    - Route 53 (hosted zone + queries): ~$0.50/month.
    - CloudWatch (alarms + metrics): ~$0.21/month.
    - SNS (notifications): ~$0.000005/month.
    - Data Transfer: ~$0.01/month.
-   - **Total**: ~$3.30-$4/month.
+   - **Total**: ~$3.05-$3.75/month.
    - **Note**: Domain registration (~$12/year) is separate if not already owned.
 
    ## Security

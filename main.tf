@@ -9,7 +9,6 @@ terraform {
        bucket         = "placeholder-bucket" # Overridden by -backend-config in GitHub Actions
        key            = "jenkins/terraform.tfstate"
        region         = "us-east-1"         # Overridden by -backend-config in GitHub Actions
-       dynamodb_table = "terraform-locks"
      }
    }
 
