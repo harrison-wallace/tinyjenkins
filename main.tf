@@ -106,6 +106,12 @@ resource "aws_iam_role_policy_attachment" "ssm_managed_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Attach CloudWatch policy for logging
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
+  role       = aws_iam_role.jenkins_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 resource "aws_iam_role_policy" "jenkins_policy" {
   name = "jenkins_s3_policy"
   role = aws_iam_role.jenkins_role.id
@@ -125,15 +131,6 @@ resource "aws_iam_role_policy" "jenkins_policy" {
           "arn:aws:s3:::${var.state_bucket}",
           "arn:aws:s3:::${var.state_bucket}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
       }
     ]
   })
@@ -312,4 +309,9 @@ output "jenkins_url" {
 output "user_data" {
   value = base64decode(aws_launch_template.jenkins.user_data)
   description = "Decoded user_data script for debugging"
+}
+
+output "iam_role_arn" {
+  value = aws_iam_role.jenkins_role.arn
+  description = "ARN of the IAM role attached to the EC2 instance"
 }
