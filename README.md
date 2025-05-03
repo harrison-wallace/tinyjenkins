@@ -98,3 +98,8 @@
    - **Route 53 Issues**: Verify NS records and hosted zone in AWS.
    - **Jenkins Unreachable**: Ensure security group allows port 8080 and instance is running. 
     - Check your IP is correct in `TF_VAR_allowed_cidr`
+   - **Terraform Plan Stuck**: If `terraform plan` takes longer than 5 minutes:
+    - Check AWS IAM permissions for EC2, S3, Route 53, CloudWatch, SNS, and IAM.
+    - Verify the S3 bucket (`TF_VAR_state_bucket`) exists and is accessible.
+    - Confirm the Route 53 hosted zone for `TF_VAR_domain_name` exists in the specified region (`TF_VAR_region`).
+    - Review GitHub Actions logs for `TF_LOG=DEBUG` output to identify slow API calls.
