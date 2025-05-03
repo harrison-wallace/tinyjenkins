@@ -85,7 +85,7 @@ resource "aws_security_group" "jenkins_sg" {
   }
 }
 
-# IAM Role for EC2 (with SSM permissions)
+# IAM Role for EC2 (with enhanced SSM permissions)
 resource "aws_iam_role" "jenkins_role" {
   name = "jenkins_ec2_role"
   assume_role_policy = jsonencode({
@@ -98,6 +98,12 @@ resource "aws_iam_role" "jenkins_role" {
       }
     }]
   })
+}
+
+# Attach AmazonSSMManagedInstanceCore policy
+resource "aws_iam_role_policy_attachment" "ssm_managed_policy" {
+  role       = aws_iam_role.jenkins_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_role_policy" "jenkins_policy" {
@@ -115,19 +121,10 @@ resource "aws_iam_role_policy" "jenkins_policy" {
         ]
         Resource = [
           "${aws_s3_bucket.backups.arn}",
-          "${aws_s3_bucket.backups.arn}/*"
+          "${aws_s3_bucket.backups.arn}/*",
+          "arn:aws:s3:::${var.state_bucket}",
+          "arn:aws:s3:::${var.state_bucket}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:DescribeInstanceInformation",
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation",
-          "ssm:StartSession",
-          "ssm:TerminateSession"
-        ]
-        Resource = "*"
       },
       {
         Effect = "Allow"
@@ -310,4 +307,9 @@ data "aws_ami" "amazon_linux" {
 
 output "jenkins_url" {
   value = "http://jenkins.${var.domain_name}:8080"
+}
+
+output "user_data" {
+  value = base64decode(aws_launch_template.jenkins.user_data)
+  description = "Decoded user_data script for debugging"
 }
