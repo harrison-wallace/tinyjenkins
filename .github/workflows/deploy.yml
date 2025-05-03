@@ -55,13 +55,19 @@ jobs:
         TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
         TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
       run: terraform apply -auto-approve tfplan
+    - name: Capture Terraform Outputs
+      id: outputs
+      run: |
+        echo "jenkins_url=$(terraform output -raw jenkins_url)" >> $GITHUB_OUTPUT
+        echo "jenkins_public_ip=$(terraform output -raw jenkins_public_ip)" >> $GITHUB_OUTPUT
     - name: Mask Sensitive Outputs
       run: |
-        echo "::add-mask::${{ steps.apply.outputs.jenkins_url }}"
+        echo "::add-mask::${{ steps.outputs.outputs.jenkins_url }}"
         echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
+        echo "::add-mask::${{ steps.outputs.outputs.jenkins_public_ip }}"
     - name: Copy Ansible Playbooks
       env:
-        EC2_IP: ${{ steps.apply.outputs.jenkins_public_ip }}
+        EC2_IP: ${{ steps.outputs.outputs.jenkins_public_ip }}
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       run: |
         echo "$SSH_KEY" > key.pem
