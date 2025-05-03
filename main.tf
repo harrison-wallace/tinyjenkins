@@ -169,6 +169,14 @@ terraform {
      }
    }
 
+   # Fetch Instances Managed by ASG
+   data "aws_instances" "jenkins_instances" {
+     instance_tags = {
+       Name = "Jenkins-Spot"
+     }
+     depends_on = [aws_autoscaling_group.jenkins_asg]
+   }
+
    # S3 Bucket for Backups
    resource "aws_s3_bucket" "backups" {
      bucket = "jenkins-backups-${random_string.suffix.result}"
@@ -191,6 +199,9 @@ terraform {
      rule {
        id     = "expire-old-backups"
        status = "Enabled"
+       filter {
+         prefix = ""
+       }
        expiration {
          days = 7
        }
@@ -213,7 +224,7 @@ terraform {
      name    = "jenkins.${var.domain_name}"
      type    = "A"
      ttl     = 300
-     records = [aws_autoscaling_group.jenkins_asg.instances[0].public_ip]
+     records = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"] # Fallback to localhost if no instances
      depends_on = [aws_autoscaling_group.jenkins_asg]
    }
 
