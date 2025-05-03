@@ -56,7 +56,7 @@
         ```bash
         ssh -i <key.pem> ec2-user@<ec2-ip> "docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword"
         ```
-        Find `<ec2-ip>` in the AWS EC2 console or Terraform output.
+        Find <ec2-ip> in the AWS EC2 console under Instances > select the instance tagged Jenkins-Spot > copy the Public IPv4 address.
    6. **Verify Backups and Monitoring**:
       - Check the S3 bucket (`jenkins-backups-<random-suffix>`) for nightly backups.
       - Confirm CloudWatch alarms (`jenkins-cpu-usage`, `jenkins-instance-health`) in AWS.
