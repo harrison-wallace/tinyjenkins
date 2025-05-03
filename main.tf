@@ -177,6 +177,11 @@ terraform {
      depends_on = [aws_autoscaling_group.jenkins_asg]
    }
 
+   # Local Variable for Public IP
+   locals {
+     public_ip = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? data.aws_instances.jenkins_instances.public_ips[0] : "127.0.0.1"
+   }
+
    # S3 Bucket for Backups
    resource "aws_s3_bucket" "backups" {
      bucket = "jenkins-backups-${random_string.suffix.result}"

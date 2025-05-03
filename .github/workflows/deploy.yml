@@ -55,13 +55,18 @@ jobs:
         TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
       run: terraform apply -auto-approve tfplan
     - name: Mask Sensitive Outputs
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       run: |
         echo "::add-mask::$(terraform output -raw jenkins_url)"
         echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
     - name: Copy Ansible Playbooks
       env:
-        EC2_IP: $(terraform output -raw jenkins_public_ip)
+        EC2_IP: $(terraform output -raw public_ip)
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       run: |
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
