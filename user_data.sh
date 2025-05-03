@@ -10,19 +10,23 @@ docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home
 yum install -y python3-pip
 pip3 install awscli ansible
 
-# Ensure SSM agent is running
+# Ensure SSM agent is installed and running
+yum install -y amazon-ssm-agent
 systemctl enable amazon-ssm-agent
-systemctl start amazon-ssm-agent
+systemctl restart amazon-ssm-agent
 
 # Create Ansible directory
 mkdir -p /etc/ansible
 echo "[local]" > /etc/ansible/hosts
 echo "localhost ansible_connection=local" >> /etc/ansible/hosts
 
-# Schedule backup
-if [ -n "${backup_bucket}" ]; then
-  echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
-  echo "0 2 * * * root /usr/local/bin/ansible-playbook /etc/ansible/backup.yml" >> /etc/crontab
-else
+# Schedule backup with validation
+if [ -z "${backup_bucket}" ]; then
   echo "Error: BACKUP_BUCKET not set" >> /var/log/user-data.log
+  exit 1
 fi
+echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
+echo "0 2 * * * root /usr/local/bin/ansible-playbook /etc/ansible/backup.yml" >> /etc/crontab
+
+# Log user-data execution
+echo "user-data script completed at $(date)" >> /var/log/user-data.log
