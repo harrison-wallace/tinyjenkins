@@ -90,40 +90,41 @@ jobs:
         # Allow SSH from GitHub Actions runners (broad range for simplicity)
         aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager
         echo "SECURITY_GROUP_ID=$SECURITY_GROUP_ID" >> $GITHUB_ENV
-    - name: Copy Ansible Playbooks
-      timeout-minutes: 10
-      env:
-        EC2_IP: $(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
-        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_region }}
-      run: |
-        if [ -z "$EC2_IP" ] || [ "$EC2_IP" == "None" ]; then
-          echo "No public IP found for instance $INSTANCE_ID"
-          exit 1
-        fi
-        echo "$SSH_KEY" > key.pem
-        chmod 600 key.pem
-        # Wait for SSH to be available (up to 5 attempts, 15s apart)
-        for i in {1..5}; do
-          if ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; then
-            break
-          fi
-          echo "Waiting for SSH to be available... Attempt $i"
-          sleep 15
-          if [ $i -eq 5 ]; then
-            echo "SSH not available after 5 attempts"
-            # Fetch console output for debugging
-            aws ec2 get-console-output --instance-id $INSTANCE_ID --query 'Output' --output text --no-cli-pager > console_output.txt
-            echo "Instance console output (last 1000 characters):"
-            tail -c 1000 console_output.txt
+        - name: Copy Ansible Playbooks
+        timeout-minutes: 10
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.TF_VAR_region }}
+        run: |
+          # Set EC2_IP and trim whitespace
+          EC2_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager | tr -d '[:space:]')
+          if [ -z "$EC2_IP" ] || [ "$EC2_IP" == "None" ]; then
+            echo "No public IP found for instance $INSTANCE_ID"
             exit 1
           fi
-        done
-        # Copy playbooks
-        scp -o StrictHostKeyChecking=no -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
-        ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "sudo mv /home/ec2-user/playbooks /etc/ansible/ && sudo ansible-playbook /etc/ansible/jenkins.yml"
+          echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
+          echo "EC2_IP is '$EC2_IP'"  # Debug output
+          echo "$SSH_KEY" > key.pem
+          chmod 600 key.pem
+          # Wait for SSH to be available (up to 5 attempts, 15s apart)
+          for i in {1..5}; do
+            if ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "exit"; then
+              break
+            fi
+            echo "Waiting for SSH to be available... Attempt $i"
+            sleep 15
+            if [ $i -eq 5 ]; then
+              echo "SSH not available after 5 attempts"
+              aws ec2 get-console-output --instance-id $INSTANCE_ID --query 'Output' --output text --no-cli-pager > console_output.txt
+              echo "Instance console output (last 1000 characters):"
+              tail -c 1000 console_output.txt
+              exit 1
+            fi
+          done
+          scp -o StrictHostKeyChecking=no -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
+          ssh -o StrictHostKeyChecking=no -i key.pem ec2-user@$EC2_IP "sudo mv /home/ec2-user/playbooks /etc/ansible/ && sudo ansible-playbook /etc/ansible/jenkins.yml"
     - name: Revert Security Group SSH Access
       if: always()
       env:

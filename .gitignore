@@ -8,3 +8,4 @@ repo*.py
 tiny*.txt
 repo*.json
 repo*.json.bak
+jenkins-key.pem
