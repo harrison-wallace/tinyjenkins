@@ -16,6 +16,7 @@ provider "aws" {
   region = var.region
 }
 
+# VPC and Networking
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   tags = {
@@ -56,6 +57,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# Security Group
 resource "aws_security_group" "jenkins_sg" {
   name        = "jenkins_sg"
   description = "Allow Jenkins and SSH access"
@@ -83,6 +85,7 @@ resource "aws_security_group" "jenkins_sg" {
   }
 }
 
+# IAM Role for EC2
 resource "aws_iam_role" "jenkins_role" {
   name = "jenkins_ec2_role"
   assume_role_policy = jsonencode({
@@ -124,6 +127,7 @@ resource "aws_iam_instance_profile" "jenkins_profile" {
   role = aws_iam_role.jenkins_role.name
 }
 
+# Launch Template
 resource "aws_launch_template" "jenkins" {
   name_prefix   = "jenkins-"
   image_id      = data.aws_ami.amazon_linux.id
@@ -137,14 +141,24 @@ resource "aws_launch_template" "jenkins" {
     security_groups            = [aws_security_group.jenkins_sg.id]
   }
   user_data = base64encode(templatefile("user_data.sh", { backup_bucket = aws_s3_bucket.backups.bucket }))
+
+  # Ensure the latest version is set as default
+  lifecycle {
+    create_before_destroy = true
+  }
+
   tag_specifications {
     resource_type = "instance"
     tags = {
       Name = "Jenkins-Spot"
     }
   }
+
+  # Track the latest version
+  default_version = 2  # Set explicitly to the latest version after update
 }
 
+# Auto-Scaling Group
 resource "aws_autoscaling_group" "jenkins_asg" {
   name                = "jenkins-asg"
   max_size            = 1
@@ -153,7 +167,7 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   vpc_zone_identifier = [aws_subnet.public.id]
   launch_template {
     id      = aws_launch_template.jenkins.id
-    version = "$Latest"
+    version = aws_launch_template.jenkins.latest_version  # Explicitly use the latest version
   }
   health_check_type         = "EC2"
   health_check_grace_period = 300
@@ -162,8 +176,14 @@ resource "aws_autoscaling_group" "jenkins_asg" {
     value               = "Jenkins-Spot"
     propagate_at_launch = true
   }
+
+  # Force update to use new launch template version
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
+# Fetch Instances Managed by ASG
 data "aws_instances" "jenkins_instances" {
   instance_tags = {
     Name = "Jenkins-Spot"
@@ -171,10 +191,12 @@ data "aws_instances" "jenkins_instances" {
   depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
+# Local Variable for Public IP
 locals {
   public_ip = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? data.aws_instances.jenkins_instances.public_ips[0] : "127.0.0.1"
 }
 
+# S3 Bucket for Backups
 resource "aws_s3_bucket" "backups" {
   bucket = "jenkins-backups-${random_string.suffix.result}"
   tags = {
@@ -211,6 +233,7 @@ resource "random_string" "suffix" {
   upper   = false
 }
 
+# Route 53
 data "aws_route53_zone" "jenkins" {
   name         = var.domain_name
   private_zone = false
@@ -225,6 +248,7 @@ resource "aws_route53_record" "jenkins" {
   depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
+# SNS Topic for CloudWatch Alarms
 resource "aws_sns_topic" "jenkins_alarms" {
   name = "jenkins-alarms"
 }
@@ -235,6 +259,7 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = var.alert_email
 }
 
+# CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "cpu_usage" {
   alarm_name          = "jenkins-cpu-usage"
   comparison_operator = "GreaterThanThreshold"
@@ -267,6 +292,7 @@ resource "aws_cloudwatch_metric_alarm" "instance_health" {
   }
 }
 
+# AMI Data
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]
