@@ -61,96 +61,23 @@ jobs:
       run: |
         echo "::add-mask::$(terraform output -raw jenkins_url)"
         echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
-    - name: Get Instance ID and Wait for Running State
+    - name: Verify Jenkins Availability
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
+      timeout-minutes: 10
       run: |
-        INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=pending,running" --query 'Reservations[0].Instances[0].InstanceId' --output text --no-cli-pager)
-        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
-          echo "No running or pending instance found with tag Name=Jenkins-Spot"
-          exit 1
-        fi
-        echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
-        aws ec2 wait instance-running --instance-ids $INSTANCE_ID --no-cli-pager
-    - name: Allow GitHub Actions SSH Access
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_region }}
-      run: |
-        if [ -z "${AWS_REGION}" ]; then
-          echo "AWS_REGION is not set"
-          exit 1
-        fi
-        SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Name,Values=jenkins-sg" --query 'SecurityGroups[0].GroupId' --output text --no-cli-pager)
-        if [ -z "$SECURITY_GROUP_ID" ] || [ "$SECURITY_GROUP_ID" == "None" ]; then
-          echo "Security group with tag Name=jenkins-sg not found"
-          exit 1
-        fi
-        aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager
-        echo "SECURITY_GROUP_ID=$SECURITY_GROUP_ID" >> $GITHUB_ENV
-    - name: Copy Ansible Playbooks
-      timeout-minutes: 15
-      env:
-        SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_region }}
-      run: |
-        # Set EC2_IP and trim whitespace
-        EC2_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager | tr -d '[:space:]')
-        if [ -z "$EC2_IP" ] || [ "$EC2_IP" == "None" ]; then
-          echo "No public IP found for instance $INSTANCE_ID"
-          exit 1
-        fi
-        echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
-        echo "$SSH_KEY" > key.pem
-        chmod 600 key.pem
-        # Wait for SSH to be available (up to 5 attempts, 15s apart)
-        for i in {1..5}; do
-          if ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "exit"; then
+        JENKINS_URL=$(terraform output -raw jenkins_url)
+        for i in {1..60}; do
+          if curl -s --head "$JENKINS_URL" | grep "200 OK"; then
+            echo "Jenkins is available at $JENKINS_URL"
             break
           fi
-          echo "Waiting for SSH to be available... Attempt $i"
-          sleep 15
-          if [ $i -eq 5 ]; then
-            echo "SSH not available after 5 attempts"
-            aws ec2 get-console-output --instance-id $INSTANCE_ID --query 'Output' --output text --no-cli-pager > console_output.txt
-            echo "Instance console output (last 1000 characters):"
-            tail -c 1000 console_output.txt
-            exit 1
-          fi
-        done
-        # Copy playbooks and debug
-        scp -o StrictHostKeyChecking=no -o LogLevel=QUIET -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
-        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "ls -la /home/ec2-user/playbooks"
-        # Ensure /etc/ansible exists and move playbooks
-        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo mkdir -p /etc/ansible && sudo mv /home/ec2-user/playbooks/* /etc/ansible/ && ls -la /etc/ansible"
-        # Verify playbook exists before running
-        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "test -f /etc/ansible/jenkins.yml || { echo 'ERROR: /etc/ansible/jenkins.yml not found'; exit 1; }"
-        # Debug Docker and Jenkins status
-        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo systemctl status docker && sudo /usr/bin/docker ps -a && sudo /usr/bin/docker logs jenkins || true"
-        # Run playbook with retry on transient SSH errors
-        for i in {1..3}; do
-          if ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo ansible-playbook /etc/ansible/jenkins.yml"; then
-            break
-          fi
-          echo "Ansible playbook failed, retrying... Attempt $i"
+          echo "Waiting for Jenkins to be available... Attempt $i"
           sleep 10
-          if [ $i -eq 3 ]; then
-            echo "Ansible playbook failed after 3 attempts"
+          if [ $i -eq 60 ]; then
+            echo "Jenkins not available after 10 minutes"
             exit 1
           fi
         done
-    - name: Revert Security Group SSH Access
-      if: always()
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_region }}
-      run: |
-        if [ -n "$SECURITY_GROUP_ID" ]; then
-          aws ec2 revoke-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager || true
-        fi
