@@ -49,6 +49,7 @@ jobs:
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         TF_VAR_domain_name: ${{ secrets.TF_VAR_domain_name }}
         TF_VAR_state_bucket: ${{ secrets.TF_VAR_state_bucket }}
+        TF_VAR_slot: ${{ secrets.TF_VAR_slot }}
         TF_VAR_region: ${{ secrets.TF_VAR_region }}
         TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
         TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
@@ -110,7 +111,7 @@ jobs:
         chmod 600 key.pem
         # Wait for SSH to be available (up to 5 attempts, 15s apart)
         for i in {1..5}; do
-          if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "exit"; then
+          if ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "exit"; then
             break
           fi
           echo "Waiting for SSH to be available... Attempt $i"
@@ -124,15 +125,17 @@ jobs:
           fi
         done
         # Copy playbooks and debug
-        scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "ls -la /home/ec2-user/playbooks"
+        scp -o StrictHostKeyChecking=no -o LogLevel=QUIET -i key.pem -r ansible/playbooks ec2-user@$EC2_IP:/home/ec2-user/
+        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "ls -la /home/ec2-user/playbooks"
         # Ensure /etc/ansible exists and move playbooks
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo mkdir -p /etc/ansible && sudo mv /home/ec2-user/playbooks/* /etc/ansible/ && ls -la /etc/ansible"
+        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo mkdir -p /etc/ansible && sudo mv /home/ec2-user/playbooks/* /etc/ansible/ && ls -la /etc/ansible"
         # Verify playbook exists before running
-        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "test -f /etc/ansible/jenkins.yml || { echo 'ERROR: /etc/ansible/jenkins.yml not found'; exit 1; }"
+        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "test -f /etc/ansible/jenkins.yml || { echo 'ERROR: /etc/ansible/jenkins.yml not found'; exit 1; }"
+        # Debug Jenkins container status
+        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "docker ps -a && docker logs jenkins || true"
         # Run playbook with retry on transient SSH errors
         for i in {1..3}; do
-          if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo ansible-playbook /etc/ansible/jenkins.yml"; then
+          if ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo ansible-playbook /etc/ansible/jenkins.yml"; then
             break
           fi
           echo "Ansible playbook failed, retrying... Attempt $i"
