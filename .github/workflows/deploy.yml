@@ -12,7 +12,7 @@ jobs:
         terraform_version: 1.5.0
     - name: Verify S3 Bucket
       env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
@@ -78,8 +78,12 @@ jobs:
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS  AWS_REGION: ${{ secrets.TF_VAR_region }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
+        if [ -z "${AWS_REGION}" ]; then
+          echo "AWS_REGION is not set"
+          exit 1
+        fi
         SECURITY_GROUP_ID=$(aws ec2 describe-security-groups --filters "Name=tag:Name,Values=jenkins-sg" --query 'SecurityGroups[0].GroupId' --output text --no-cli-pager)
         if [ -z "$SECURITY_GROUP_ID" ] || [ "$SECURITY_GROUP_ID" == "None" ]; then
           echo "Security group with tag Name=jenkins-sg not found"
@@ -102,6 +106,7 @@ jobs:
           exit 1
         fi
         echo "EC2_IP=$EC2_IP" >> $GITHUB_ENV
+        echo "EC2_IP is '$EC2_IP'"  # Debug output
         echo "$SSH_KEY" > key.pem
         chmod 600 key.pem
         # Wait for SSH to be available (up to 5 attempts, 15s apart)
