@@ -1,14 +1,24 @@
 #!/bin/bash
+# Log all output to /var/log/user-data.log for debugging
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
 # Update system and install Docker
-yum update -y
-yum install -y docker
+yum update -y || { echo "Failed to update system"; exit 1; }
+yum install -y docker || { echo "Failed to install Docker"; exit 1; }
 usermod -aG docker ec2-user
-systemctl enable docker
-systemctl start docker
+systemctl enable docker || { echo "Failed to enable Docker"; exit 1; }
+systemctl start docker || { echo "Failed to start Docker"; exit 1; }
+
+# Verify Docker installation
+if ! command -v /usr/bin/docker &>/dev/null; then
+  echo "Docker binary not found"
+  exit 1
+fi
 
 # Wait for Docker to be fully operational
 for i in {1..10}; do
   if /usr/bin/docker info &>/dev/null; then
+    echo "Docker is operational"
     break
   fi
   echo "Waiting for Docker to start... Attempt $i"
@@ -19,11 +29,16 @@ for i in {1..10}; do
   fi
 done
 
+# Create and set ownership for Jenkins home directory
+mkdir -p /var/jenkins_home || { echo "Failed to create /var/jenkins_home"; exit 1; }
+chown 1000:1000 /var/jenkins_home || { echo "Failed to set ownership for /var/jenkins_home"; exit 1; }
+chmod 700 /var/jenkins_home || { echo "Failed to set permissions for /var/jenkins_home"; exit 1; }
+
 # Run Jenkins container from custom image
-/usr/bin/docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins harrisoncloudengineer/tinyjenkins:latest
+/usr/bin/docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins harrisoncloudengineer/tinyjenkins:latest || { echo "Failed to start Jenkins container"; exit 1; }
 
 # Install AWS CLI
-yum install -y awscli
+yum install -y awscli || { echo "Failed to install AWS CLI"; exit 1; }
 
 # Create backup script
 cat << 'EOF' > /usr/local/bin/jenkins_backup.sh
