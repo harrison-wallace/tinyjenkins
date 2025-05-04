@@ -49,7 +49,6 @@ jobs:
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         TF_VAR_domain_name: ${{ secrets.TF_VAR_domain_name }}
         TF_VAR_state_bucket: ${{ secrets.TF_VAR_state_bucket }}
-        TF_VAR_slot: ${{ secrets.TF_VAR_slot }}
         TF_VAR_region: ${{ secrets.TF_VAR_region }}
         TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
         TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
@@ -93,7 +92,7 @@ jobs:
         aws ec2 authorize-security-group-ingress --group-id $SECURITY_GROUP_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --no-cli-pager
         echo "SECURITY_GROUP_ID=$SECURITY_GROUP_ID" >> $GITHUB_ENV
     - name: Copy Ansible Playbooks
-      timeout-minutes: 10
+      timeout-minutes: 15
       env:
         SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -131,8 +130,8 @@ jobs:
         ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo mkdir -p /etc/ansible && sudo mv /home/ec2-user/playbooks/* /etc/ansible/ && ls -la /etc/ansible"
         # Verify playbook exists before running
         ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "test -f /etc/ansible/jenkins.yml || { echo 'ERROR: /etc/ansible/jenkins.yml not found'; exit 1; }"
-        # Debug Jenkins container status
-        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "docker ps -a && docker logs jenkins || true"
+        # Debug Docker and Jenkins status
+        ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo systemctl status docker && sudo /usr/bin/docker ps -a && sudo /usr/bin/docker logs jenkins || true"
         # Run playbook with retry on transient SSH errors
         for i in {1..3}; do
           if ssh -o StrictHostKeyChecking=no -o LogLevel=QUIET -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -i key.pem ec2-user@$EC2_IP "sudo ansible-playbook /etc/ansible/jenkins.yml"; then
