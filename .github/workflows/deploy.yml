@@ -66,18 +66,35 @@ jobs:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
-      timeout-minutes: 10
+      timeout-minutes: 15
       run: |
-        JENKINS_URL=$(terraform output -raw jenkins_url)
-        for i in {1..60}; do
-          if curl -s --head "$JENKINS_URL" | grep "200 OK"; then
-            echo "Jenkins is available at $JENKINS_URL"
+        # Get instance ID
+        INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=pending,running" --query 'Reservations[0].Instances[0].InstanceId' --output text --no-cli-pager)
+        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+          echo "No running or pending instance found with tag Name=Jenkins-Spot"
+          exit 1
+        fi
+        # Get public IP
+        JENKINS_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
+        if [ -z "$JENKINS_IP" ] || [ "$JENKINS_IP" == "None" ]; then
+          echo "No public IP found for instance $INSTANCE_ID"
+          exit 1
+        fi
+        JENKINS_URL="http://$JENKINS_IP:8080"
+        echo "Checking Jenkins availability at $JENKINS_URL"
+        echo "Note: The DNS record for http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 may take time to propagate (up to 300 seconds or more)."
+        for i in {1..90}; do
+          RESPONSE=$(curl -s --head "$JENKINS_URL")
+          if echo "$RESPONSE" | grep -E "200 OK|403 Forbidden"; then
+            echo "Jenkins is available at $JENKINS_URL (Response: $(echo "$RESPONSE" | head -n 1))"
+            echo "DNS-based URL: http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 (may require additional propagation time)"
             break
           fi
           echo "Waiting for Jenkins to be available... Attempt $i"
           sleep 10
-          if [ $i -eq 60 ]; then
-            echo "Jenkins not available after 10 minutes"
+          if [ $i -eq 90 ]; then
+            echo "Jenkins not available after 15 minutes"
+            echo "Last response: $RESPONSE"
             exit 1
           fi
         done
