@@ -142,7 +142,6 @@ resource "aws_launch_template" "jenkins" {
   }
   user_data = base64encode(templatefile("user_data.sh", { backup_bucket = aws_s3_bucket.backups.bucket }))
 
-  # Ensure the latest version is set as default
   lifecycle {
     create_before_destroy = true
   }
@@ -153,9 +152,6 @@ resource "aws_launch_template" "jenkins" {
       Name = "Jenkins-Spot"
     }
   }
-
-  # Set the latest version as default
-  default_version = "${aws_launch_template.jenkins.latest_version}"
 }
 
 # Auto-Scaling Group
@@ -177,13 +173,12 @@ resource "aws_autoscaling_group" "jenkins_asg" {
     propagate_at_launch = true
   }
 
-  # Trigger instance refresh when launch template changes
+  # Automatically refresh instances when launch template changes
   instance_refresh {
     strategy = "Rolling"
     preferences {
       min_healthy_percentage = 100
     }
-    triggers = ["launch_template"]
   }
 
   lifecycle {
