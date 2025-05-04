@@ -6,9 +6,9 @@ terraform {
     }
   }
   backend "s3" {
-    bucket         = "placeholder-bucket" # Overridden by -backend-config in GitHub Actions
+    bucket         = "placeholder-bucket"
     key            = "jenkins/terraform.tfstate"
-    region         = "us-east-1"         # Overridden by -backend-config in GitHub Actions
+    region         = "us-east-1"
   }
 }
 
@@ -16,7 +16,6 @@ provider "aws" {
   region = var.region
 }
 
-# VPC and Networking
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
   tags = {
@@ -57,7 +56,6 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Security Group
 resource "aws_security_group" "jenkins_sg" {
   name        = "jenkins_sg"
   description = "Allow Jenkins and SSH access"
@@ -85,7 +83,6 @@ resource "aws_security_group" "jenkins_sg" {
   }
 }
 
-# IAM Role for EC2
 resource "aws_iam_role" "jenkins_role" {
   name = "jenkins_ec2_role"
   assume_role_policy = jsonencode({
@@ -127,7 +124,6 @@ resource "aws_iam_instance_profile" "jenkins_profile" {
   role = aws_iam_role.jenkins_role.name
 }
 
-# Launch Template
 resource "aws_launch_template" "jenkins" {
   name_prefix   = "jenkins-"
   image_id      = data.aws_ami.amazon_linux.id
@@ -149,7 +145,6 @@ resource "aws_launch_template" "jenkins" {
   }
 }
 
-# Auto-Scaling Group
 resource "aws_autoscaling_group" "jenkins_asg" {
   name                = "jenkins-asg"
   max_size            = 1
@@ -169,7 +164,6 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   }
 }
 
-# Fetch Instances Managed by ASG
 data "aws_instances" "jenkins_instances" {
   instance_tags = {
     Name = "Jenkins-Spot"
@@ -177,12 +171,10 @@ data "aws_instances" "jenkins_instances" {
   depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
-# Local Variable for Public IP
 locals {
   public_ip = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? data.aws_instances.jenkins_instances.public_ips[0] : "127.0.0.1"
 }
 
-# S3 Bucket for Backups
 resource "aws_s3_bucket" "backups" {
   bucket = "jenkins-backups-${random_string.suffix.result}"
   tags = {
@@ -219,7 +211,6 @@ resource "random_string" "suffix" {
   upper   = false
 }
 
-# Route 53
 data "aws_route53_zone" "jenkins" {
   name         = var.domain_name
   private_zone = false
@@ -234,7 +225,6 @@ resource "aws_route53_record" "jenkins" {
   depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
-# SNS Topic for CloudWatch Alarms
 resource "aws_sns_topic" "jenkins_alarms" {
   name = "jenkins-alarms"
 }
@@ -245,7 +235,6 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = var.alert_email
 }
 
-# CloudWatch Alarms
 resource "aws_cloudwatch_metric_alarm" "cpu_usage" {
   alarm_name          = "jenkins-cpu-usage"
   comparison_operator = "GreaterThanThreshold"
@@ -278,7 +267,6 @@ resource "aws_cloudwatch_metric_alarm" "instance_health" {
   }
 }
 
-# AMI Data
 data "aws_ami" "amazon_linux" {
   most_recent = true
   owners      = ["amazon"]

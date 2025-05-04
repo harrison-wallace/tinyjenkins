@@ -28,7 +28,7 @@ yum install -y awscli
 # Create backup script
 cat << 'EOF' > /usr/local/bin/jenkins_backup.sh
 #!/bin/bash
-BACKUP_BUCKET="${BACKUP_BUCKET}"
+BACKUP_BUCKET="${backup_bucket}"
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
 BACKUP_FILE="/tmp/jenkins_backup_${TIMESTAMP}.tar.gz"
 tar -czf "$BACKUP_FILE" -C /var/jenkins_home .
@@ -38,5 +38,5 @@ EOF
 chmod +x /usr/local/bin/jenkins_backup.sh
 
 # Schedule backup
-echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
+echo "backup_bucket=${backup_bucket}" >> /etc/environment
 echo "0 2 * * * root /usr/local/bin/jenkins_backup.sh" >> /etc/crontab
