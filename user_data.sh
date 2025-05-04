@@ -30,9 +30,9 @@ cat << 'EOF' > /usr/local/bin/jenkins_backup.sh
 #!/bin/bash
 BACKUP_BUCKET="${backup_bucket}"
 TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP_FILE="/tmp/jenkins_backup_${TIMESTAMP}.tar.gz"
+BACKUP_FILE="/tmp/jenkins_backup_$${TIMESTAMP}.tar.gz"
 tar -czf "$BACKUP_FILE" -C /var/jenkins_home .
-aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_BUCKET/backups/jenkins_backup_${TIMESTAMP}.tar.gz"
+aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_BUCKET/backups/jenkins_backup_$${TIMESTAMP}.tar.gz"
 rm -f "$BACKUP_FILE"
 EOF
 chmod +x /usr/local/bin/jenkins_backup.sh
