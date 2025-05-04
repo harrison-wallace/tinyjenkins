@@ -154,8 +154,8 @@ resource "aws_launch_template" "jenkins" {
     }
   }
 
-  # Track the latest version
-  default_version = 2  # Set explicitly to the latest version after update
+  # Set the latest version as default
+  default_version = "${aws_launch_template.jenkins.latest_version}"
 }
 
 # Auto-Scaling Group
@@ -167,7 +167,7 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   vpc_zone_identifier = [aws_subnet.public.id]
   launch_template {
     id      = aws_launch_template.jenkins.id
-    version = aws_launch_template.jenkins.latest_version  # Explicitly use the latest version
+    version = aws_launch_template.jenkins.latest_version
   }
   health_check_type         = "EC2"
   health_check_grace_period = 300
@@ -177,7 +177,15 @@ resource "aws_autoscaling_group" "jenkins_asg" {
     propagate_at_launch = true
   }
 
-  # Force update to use new launch template version
+  # Trigger instance refresh when launch template changes
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 100
+    }
+    triggers = ["launch_template"]
+  }
+
   lifecycle {
     create_before_destroy = true
   }
