@@ -19,18 +19,24 @@ for i in {1..10}; do
   fi
 done
 
-# Run Jenkins container
-/usr/bin/docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins jenkins/jenkins:lts
+# Run Jenkins container from custom image
+/usr/bin/docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins harrisoncloudengineer/tinyjenkins:latest
 
-# Install AWS CLI and Ansible
-yum install -y python3-pip
-pip3 install awscli ansible
+# Install AWS CLI
+yum install -y awscli
 
-# Create Ansible directory
-mkdir -p /etc/ansible
-echo "[local]" > /etc/ansible/hosts
-echo "localhost ansible_connection=local" >> /etc/ansible/hosts
+# Create backup script
+cat << 'EOF' > /usr/local/bin/jenkins_backup.sh
+#!/bin/bash
+BACKUP_BUCKET="${BACKUP_BUCKET}"
+TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+BACKUP_FILE="/tmp/jenkins_backup_${TIMESTAMP}.tar.gz"
+tar -czf "$BACKUP_FILE" -C /var/jenkins_home .
+aws s3 cp "$BACKUP_FILE" "s3://$BACKUP_BUCKET/backups/jenkins_backup_${TIMESTAMP}.tar.gz"
+rm -f "$BACKUP_FILE"
+EOF
+chmod +x /usr/local/bin/jenkins_backup.sh
 
 # Schedule backup
 echo "BACKUP_BUCKET=${backup_bucket}" >> /etc/environment
-echo "0 2 * * * root /usr/local/bin/ansible-playbook /etc/ansible/backup.yml" >> /etc/crontab
+echo "0 2 * * * root /usr/local/bin/jenkins_backup.sh" >> /etc/crontab

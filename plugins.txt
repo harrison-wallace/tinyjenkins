@@ -1,0 +1,15 @@
+git
+workflow-aggregator
+credentials
+miniorange-two-factor
+theme-manager
+dark-theme
+docker-workflow
+github-branch-source
+nodejs
+pipeline-graph-view
+pipeline-aws
+configuration-as-code
+role-strategy
+python
+blueocean
