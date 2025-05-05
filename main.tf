@@ -13,18 +13,7 @@ terraform {
 }
 
 provider "aws" {
-  region = var.REGION
-}
-
-# Debug Outputs for Variables
-output "debug_enable_dynamic_dns" {
-  value = var.ENABLE_DYNAMIC_DNS
-  description = "Debug: Value of ENABLE_DYNAMIC_DNS variable"
-}
-
-output "debug_enable_https" {
-  value = var.ENABLE_HTTPS
-  description = "Debug: Value of ENABLE_HTTPS variable"
+  region = var.region
 }
 
 # VPC and Networking
@@ -38,7 +27,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "${var.REGION}a"
+  availability_zone       = "${var.region}a"
   map_public_ip_on_launch = true
   tags = {
     Name = "jenkins-public-subnet"
@@ -71,7 +60,7 @@ resource "aws_route_table_association" "public" {
 # Security Group
 resource "aws_security_group" "jenkins_sg" {
   name        = "jenkins_sg"
-  description = "Allow Jenkins, SSH, and HTTPS access"
+  description = "Allow Jenkins and SSH access"
   vpc_id      = aws_vpc.main.id
   ingress {
     from_port   = 8080
@@ -83,13 +72,7 @@ resource "aws_security_group" "jenkins_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.ALLOWED_CIDR]
-  }
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = var.ENABLE_HTTPS ? ["0.0.0.0/0"] : []
+    cidr_blocks = [var.allowed_cidr]
   }
   egress {
     from_port   = 0
@@ -118,36 +101,24 @@ resource "aws_iam_role" "jenkins_role" {
 }
 
 resource "aws_iam_role_policy" "jenkins_policy" {
-  name = "jenkins_s3_acm_policy"
+  name = "jenkins_s3_policy"
   role = aws_iam_role.jenkins_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = concat(
-      [
-        {
-          Effect = "Allow"
-          Action = [
-            "s3:PutObject",
-            "s3:GetObject",
-            "s3:ListBucket"
-          ]
-          Resource = [
-            "${aws_s3_bucket.backups.arn}",
-            "${aws_s3_bucket.backups.arn}/*"
-          ]
-        }
-      ],
-      var.ENABLE_HTTPS ? [
-        {
-          Effect = "Allow"
-          Action = [
-            "acm:ExportCertificate",
-            "acm:DescribeCertificate"
-          ]
-          Resource = [aws_acm_certificate.jenkins[0].arn]
-        }
-      ] : []
-    )
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "${aws_s3_bucket.backups.arn}",
+          "${aws_s3_bucket.backups.arn}/*"
+        ]
+      }
+    ]
   })
 }
 
@@ -156,40 +127,12 @@ resource "aws_iam_instance_profile" "jenkins_profile" {
   role = aws_iam_role.jenkins_role.name
 }
 
-# ACM Certificate
-resource "aws_acm_certificate" "jenkins" {
-  count             = var.ENABLE_HTTPS ? 1 : 0
-  domain_name       = "jenkins.${var.DOMAIN_NAME}"
-  validation_method = "DNS"
-  tags = {
-    Name = "jenkins-cert"
-  }
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_route53_record" "cert_validation" {
-  count   = var.ENABLE_HTTPS ? 1 : 0
-  zone_id = data.aws_route53_zone.jenkins.zone_id
-  name    = var.ENABLE_HTTPS ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_name : ""
-  type    = var.ENABLE_HTTPS ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_type : ""
-  records = var.ENABLE_HTTPS ? [tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_value] : []
-  ttl     = 60
-}
-
-resource "aws_acm_certificate_validation" "jenkins" {
-  count                   = var.ENABLE_HTTPS ? 1 : 0
-  certificate_arn         = aws_acm_certificate.jenkins[0].arn
-  validation_record_fqdns = var.ENABLE_HTTPS ? [aws_route53_record.cert_validation[0].fqdn] : []
-}
-
 # Launch Template
 resource "aws_launch_template" "jenkins" {
   name_prefix   = "jenkins-"
   image_id      = data.aws_ami.amazon_linux.id
-  instance_type = var.INSTANCE_TYPE
-  key_name      = var.KEY_NAME
+  instance_type = var.instance_type
+  key_name      = var.key_name
   iam_instance_profile {
     name = aws_iam_instance_profile.jenkins_profile.name
   }
@@ -197,13 +140,7 @@ resource "aws_launch_template" "jenkins" {
     associate_public_ip_address = true
     security_groups            = [aws_security_group.jenkins_sg.id]
   }
-  user_data = base64encode(templatefile("user_data.sh", {
-    backup_bucket = aws_s3_bucket.backups.bucket,
-    enable_https  = var.ENABLE_HTTPS,
-    cert_arn      = var.ENABLE_HTTPS ? aws_acm_certificate.jenkins[0].arn : "",
-    region        = var.REGION,
-    domain_name   = var.DOMAIN_NAME
-  }))
+  user_data = base64encode(templatefile("user_data.sh", { backup_bucket = aws_s3_bucket.backups.bucket }))
 
   lifecycle {
     create_before_destroy = true
@@ -226,7 +163,7 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   vpc_zone_identifier = [aws_subnet.public.id]
   launch_template {
     id      = aws_launch_template.jenkins.id
-    version = "$Latest"
+    version = aws_launch_template.jenkins.latest_version
   }
   health_check_type         = "EC2"
   health_check_grace_period = 300
@@ -236,6 +173,7 @@ resource "aws_autoscaling_group" "jenkins_asg" {
     propagate_at_launch = true
   }
 
+  # Automatically refresh instances when launch template changes
   instance_refresh {
     strategy = "Rolling"
     preferences {
@@ -248,187 +186,17 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   }
 }
 
-# Trigger ASG Instance Refresh
-resource "null_resource" "instance_refresh" {
-  triggers = {
-    launch_template_version = aws_launch_template.jenkins.latest_version
+# Fetch Instances Managed by ASG
+data "aws_instances" "jenkins_instances" {
+  instance_tags = {
+    Name = "Jenkins-Spot"
   }
-
-  provisioner "local-exec" {
-    command = <<EOT
-      # Attempt to start instance refresh with retries (up to 3 attempts)
-      attempt=1
-      while [ $attempt -le 3 ]; do
-        echo "Starting instance refresh attempt $attempt..."
-        REFRESH_ID=$(aws autoscaling start-instance-refresh \
-          --auto-scaling-group-name jenkins-asg \
-          --region ${var.REGION} \
-          --preferences '{"MinHealthyPercentage":100}' \
-          --query 'InstanceRefreshId' \
-          --output text 2>/dev/null)
-        if [ -n "$REFRESH_ID" ]; then
-          echo "Instance refresh started with ID: $REFRESH_ID"
-          break
-        fi
-        echo "Failed to start instance refresh, retrying in 30 seconds..."
-        sleep 30
-        attempt=$((attempt + 1))
-      done
-      if [ -z "$REFRESH_ID" ]; then
-        echo "Failed to start instance refresh after 3 attempts"
-        exit 1
-      fi
-      # Wait for refresh to complete (up to 15 minutes)
-      i=1
-      while [ $i -le 90 ]; do
-        STATUS=$(aws autoscaling describe-instance-refreshes \
-          --auto-scaling-group-name jenkins-asg \
-          --instance-refresh-ids $REFRESH_ID \
-          --region ${var.REGION} \
-          --query 'InstanceRefreshes[0].Status' \
-          --output text 2>/dev/null)
-        if [ "$STATUS" = "Successful" ]; then
-          echo "Instance refresh completed successfully"
-          exit 0
-        elif [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Failed" ]; then
-          echo "Instance refresh $STATUS"
-          aws autoscaling describe-instance-refreshes \
-            --auto-scaling-group-name jenkins-asg \
-            --instance-refresh-ids $REFRESH_ID \
-            --region ${var.REGION} \
-            --query 'InstanceRefreshes[0].StatusReason' \
-            --output text
-          exit 1
-        fi
-        echo "Waiting for instance refresh... Attempt $i"
-        sleep 10
-        i=$((i + 1))
-      done
-      echo "Instance refresh timed out after 15 minutes"
-      aws autoscaling describe-instance-refreshes \
-        --auto-scaling-group-name jenkins-asg \
-        --instance-refresh-ids $REFRESH_ID \
-        --region ${var.REGION}
-      exit 1
-EOT
-  }
-
-  depends_on = [aws_autoscaling_group.jenkins_asg, aws_launch_template.jenkins]
+  depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
-# SNS Topic for Auto-Scaling Notifications
-resource "aws_sns_topic" "jenkins_asg_notifications" {
-  name = "jenkins-asg-notifications"
-}
-
-resource "aws_autoscaling_notification" "jenkins_asg" {
-  group_names = [aws_autoscaling_group.jenkins_asg.name]
-  notifications = [
-    "autoscaling:EC2_INSTANCE_LAUNCH",
-    "autoscaling:EC2_INSTANCE_TERMINATE"
-  ]
-  topic_arn = aws_sns_topic.jenkins_asg_notifications.arn
-}
-
-# Route 53 Health Check
-resource "aws_route53_health_check" "jenkins" {
-  count              = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  fqdn               = "jenkins.${var.DOMAIN_NAME}"
-  port               = var.ENABLE_HTTPS ? 443 : 8080
-  type               = var.ENABLE_HTTPS ? "HTTPS" : "HTTP"
-  resource_path       = "/"
-  failure_threshold  = 3
-  request_interval   = 30
-  tags = {
-    Name = "jenkins-health-check"
-  }
-}
-
-# IAM Role for Lambda
-resource "aws_iam_role" "lambda_role" {
-  count = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  name  = "jenkins_lambda_role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "lambda_policy" {
-  count = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  name  = "jenkins_lambda_policy"
-  role  = aws_iam_role.lambda_role[0].id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "route53:ChangeResourceRecordSets",
-          "route53:ListResourceRecordSets"
-        ]
-        Resource = "arn:aws:route53:::hostedzone/${data.aws_route53_zone.jenkins.zone_id}"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:DescribeInstances"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-# Lambda Function
-resource "aws_lambda_function" "update_route53" {
-  count         = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  filename      = "lambda_function.zip"
-  function_name = "update_jenkins_route53"
-  role          = aws_iam_role.lambda_role[0].arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.9"
-  timeout       = 30
-  source_code_hash = filebase64sha256("lambda_function.zip")
-  environment {
-    variables = {
-      ZONE_ID     = data.aws_route53_zone.jenkins.zone_id
-      RECORD_NAME = "jenkins.${var.DOMAIN_NAME}"
-    }
-  }
-}
-
-# Lambda Permission for SNS
-resource "aws_lambda_permission" "sns" {
-  count         = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  statement_id  = "AllowExecutionFromSNS"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.update_route53[0].function_name
-  principal     = "sns.amazonaws.com"
-  source_arn    = aws_sns_topic.jenkins_asg_notifications.arn
-}
-
-# SNS Subscription for Lambda
-resource "aws_sns_topic_subscription" "lambda" {
-  count     = var.ENABLE_DYNAMIC_DNS ? 1 : 0
-  topic_arn = aws_sns_topic.jenkins_asg_notifications.arn
-  protocol  = "lambda"
-  endpoint  = aws_lambda_function.update_route53[0].arn
+# Local Variable for Public IP
+locals {
+  public_ip = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? data.aws_instances.jenkins_instances.public_ips[0] : "127.0.0.1"
 }
 
 # S3 Bucket for Backups
@@ -470,25 +238,17 @@ resource "random_string" "suffix" {
 
 # Route 53
 data "aws_route53_zone" "jenkins" {
-  name         = var.DOMAIN_NAME
+  name         = var.domain_name
   private_zone = false
 }
 
 resource "aws_route53_record" "jenkins" {
   zone_id = data.aws_route53_zone.jenkins.zone_id
-  name    = "jenkins.${var.DOMAIN_NAME}"
+  name    = "jenkins.${var.domain_name}"
   type    = "A"
   ttl     = 300
-  records = var.ENABLE_DYNAMIC_DNS ? ["127.0.0.1"] : length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"]
-  depends_on = [aws_autoscaling_group.jenkins_asg, null_resource.instance_refresh, aws_lambda_function.update_route53]
-}
-
-# Fetch Instances Managed by ASG
-data "aws_instances" "jenkins_instances" {
-  instance_tags = {
-    Name = "Jenkins-Spot"
-  }
-  depends_on = [aws_autoscaling_group.jenkins_asg, null_resource.instance_refresh]
+  records = length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"]
+  depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
 # SNS Topic for CloudWatch Alarms
@@ -499,7 +259,7 @@ resource "aws_sns_topic" "jenkins_alarms" {
 resource "aws_sns_topic_subscription" "email" {
   topic_arn = aws_sns_topic.jenkins_alarms.arn
   protocol  = "email"
-  endpoint  = var.ALERT_EMAIL
+  endpoint  = var.alert_email
 }
 
 # CloudWatch Alarms
@@ -546,5 +306,5 @@ data "aws_ami" "amazon_linux" {
 }
 
 output "jenkins_url" {
-  value = var.ENABLE_HTTPS ? "https://jenkins.${var.DOMAIN_NAME}" : "http://jenkins.${var.DOMAIN_NAME}:8080"
+  value = "http://jenkins.${var.domain_name}:8080"
 }
