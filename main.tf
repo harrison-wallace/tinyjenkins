@@ -13,7 +13,18 @@ terraform {
 }
 
 provider "aws" {
-  region = var.region
+  region = var.REGION
+}
+
+# Debug Outputs for Variables
+output "debug_enable_dynamic_dns" {
+  value = var.ENABLE_DYNAMIC_DNS
+  description = "Debug: Value of ENABLE_DYNAMIC_DNS variable"
+}
+
+output "debug_enable_https" {
+  value = var.ENABLE_HTTPS
+  description = "Debug: Value of ENABLE_HTTPS variable"
 }
 
 # VPC and Networking
@@ -27,7 +38,7 @@ resource "aws_vpc" "main" {
 resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "${var.region}a"
+  availability_zone       = "${var.REGION}a"
   map_public_ip_on_launch = true
   tags = {
     Name = "jenkins-public-subnet"
@@ -72,13 +83,13 @@ resource "aws_security_group" "jenkins_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.allowed_cidr]
+    cidr_blocks = [var.ALLOWED_CIDR]
   }
   ingress {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = var.enable_https ? ["0.0.0.0/0"] : []
+    cidr_blocks = var.ENABLE_HTTPS ? ["0.0.0.0/0"] : []
   }
   egress {
     from_port   = 0
@@ -126,7 +137,7 @@ resource "aws_iam_role_policy" "jenkins_policy" {
           ]
         }
       ],
-      var.enable_https ? [
+      var.ENABLE_HTTPS ? [
         {
           Effect = "Allow"
           Action = [
@@ -147,8 +158,8 @@ resource "aws_iam_instance_profile" "jenkins_profile" {
 
 # ACM Certificate
 resource "aws_acm_certificate" "jenkins" {
-  count             = var.enable_https ? 1 : 0
-  domain_name       = "jenkins.${var.domain_name}"
+  count             = var.ENABLE_HTTPS ? 1 : 0
+  domain_name       = "jenkins.${var.DOMAIN_NAME}"
   validation_method = "DNS"
   tags = {
     Name = "jenkins-cert"
@@ -159,26 +170,26 @@ resource "aws_acm_certificate" "jenkins" {
 }
 
 resource "aws_route53_record" "cert_validation" {
-  count   = var.enable_https ? 1 : 0
+  count   = var.ENABLE_HTTPS ? 1 : 0
   zone_id = data.aws_route53_zone.jenkins.zone_id
-  name    = var.enable_https ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_name : ""
-  type    = var.enable_https ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_type : ""
-  records = var.enable_https ? [tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_value] : []
+  name    = var.ENABLE_HTTPS ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_name : ""
+  type    = var.ENABLE_HTTPS ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_type : ""
+  records = var.ENABLE_HTTPS ? [tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_value] : []
   ttl     = 60
 }
 
 resource "aws_acm_certificate_validation" "jenkins" {
-  count                   = var.enable_https ? 1 : 0
+  count                   = var.ENABLE_HTTPS ? 1 : 0
   certificate_arn         = aws_acm_certificate.jenkins[0].arn
-  validation_record_fqdns = var.enable_https ? [aws_route53_record.cert_validation[0].fqdn] : []
+  validation_record_fqdns = var.ENABLE_HTTPS ? [aws_route53_record.cert_validation[0].fqdn] : []
 }
 
 # Launch Template
 resource "aws_launch_template" "jenkins" {
   name_prefix   = "jenkins-"
   image_id      = data.aws_ami.amazon_linux.id
-  instance_type = var.instance_type
-  key_name      = var.key_name
+  instance_type = var.INSTANCE_TYPE
+  key_name      = var.KEY_NAME
   iam_instance_profile {
     name = aws_iam_instance_profile.jenkins_profile.name
   }
@@ -188,10 +199,10 @@ resource "aws_launch_template" "jenkins" {
   }
   user_data = base64encode(templatefile("user_data.sh", {
     backup_bucket = aws_s3_bucket.backups.bucket,
-    enable_https  = var.enable_https,
-    cert_arn      = var.enable_https ? aws_acm_certificate.jenkins[0].arn : "",
-    region        = var.region,
-    domain_name   = var.domain_name
+    enable_https  = var.ENABLE_HTTPS,
+    cert_arn      = var.ENABLE_HTTPS ? aws_acm_certificate.jenkins[0].arn : "",
+    region        = var.REGION,
+    domain_name   = var.DOMAIN_NAME
   }))
 
   lifecycle {
@@ -237,6 +248,44 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   }
 }
 
+# Trigger ASG Instance Refresh
+resource "null_resource" "instance_refresh" {
+  triggers = {
+    launch_template_version = aws_launch_template.jenkins.latest_version
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+      aws autoscaling start-instance-refresh \
+        --auto-scaling-group-name jenkins-asg \
+        --region ${var.REGION} \
+        --preferences '{"MinHealthyPercentage":100}' || \
+        { echo "Failed to start instance refresh"; exit 1; }
+      # Wait for refresh to complete (up to 15 minutes)
+      for i in {1..90}; do
+        STATUS=$(aws autoscaling describe-instance-refreshes \
+          --auto-scaling-group-name jenkins-asg \
+          --region ${var.REGION} \
+          --query 'InstanceRefreshes[0].Status' \
+          --output text)
+        if [ "$STATUS" = "Successful" ]; then
+          echo "Instance refresh completed successfully"
+          exit 0
+        elif [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Failed" ]; then
+          echo "Instance refresh $STATUS"
+          exit 1
+        fi
+        echo "Waiting for instance refresh... Attempt $i"
+        sleep 10
+      done
+      echo "Instance refresh timed out after 15 minutes"
+      exit 1
+EOT
+  }
+
+  depends_on = [aws_autoscaling_group.jenkins_asg, aws_launch_template.jenkins]
+}
+
 # SNS Topic for Auto-Scaling Notifications
 resource "aws_sns_topic" "jenkins_asg_notifications" {
   name = "jenkins-asg-notifications"
@@ -253,10 +302,10 @@ resource "aws_autoscaling_notification" "jenkins_asg" {
 
 # Route 53 Health Check
 resource "aws_route53_health_check" "jenkins" {
-  count              = var.enable_dynamic_dns ? 1 : 0
-  fqdn               = "jenkins.${var.domain_name}"
-  port               = var.enable_https ? 443 : 8080
-  type               = var.enable_https ? "HTTPS" : "HTTP"
+  count              = var.ENABLE_DYNAMIC_DNS ? 1 : 0
+  fqdn               = "jenkins.${var.DOMAIN_NAME}"
+  port               = var.ENABLE_HTTPS ? 443 : 8080
+  type               = var.ENABLE_HTTPS ? "HTTPS" : "HTTP"
   resource_path       = "/"
   failure_threshold  = 3
   request_interval   = 30
@@ -267,7 +316,7 @@ resource "aws_route53_health_check" "jenkins" {
 
 # IAM Role for Lambda
 resource "aws_iam_role" "lambda_role" {
-  count = var.enable_dynamic_dns ? 1 : 0
+  count = var.ENABLE_DYNAMIC_DNS ? 1 : 0
   name  = "jenkins_lambda_role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -282,7 +331,7 @@ resource "aws_iam_role" "lambda_role" {
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
-  count = var.enable_dynamic_dns ? 1 : 0
+  count = var.ENABLE_DYNAMIC_DNS ? 1 : 0
   name  = "jenkins_lambda_policy"
   role  = aws_iam_role.lambda_role[0].id
   policy = jsonencode({
@@ -318,7 +367,7 @@ resource "aws_iam_role_policy" "lambda_policy" {
 
 # Lambda Function
 resource "aws_lambda_function" "update_route53" {
-  count         = var.enable_dynamic_dns ? 1 : 0
+  count         = var.ENABLE_DYNAMIC_DNS ? 1 : 0
   filename      = "lambda_function.zip"
   function_name = "update_jenkins_route53"
   role          = aws_iam_role.lambda_role[0].arn
@@ -329,14 +378,14 @@ resource "aws_lambda_function" "update_route53" {
   environment {
     variables = {
       ZONE_ID     = data.aws_route53_zone.jenkins.zone_id
-      RECORD_NAME = "jenkins.${var.domain_name}"
+      RECORD_NAME = "jenkins.${var.DOMAIN_NAME}"
     }
   }
 }
 
 # Lambda Permission for SNS
 resource "aws_lambda_permission" "sns" {
-  count         = var.enable_dynamic_dns ? 1 : 0
+  count         = var.ENABLE_DYNAMIC_DNS ? 1 : 0
   statement_id  = "AllowExecutionFromSNS"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.update_route53[0].function_name
@@ -346,7 +395,7 @@ resource "aws_lambda_permission" "sns" {
 
 # SNS Subscription for Lambda
 resource "aws_sns_topic_subscription" "lambda" {
-  count     = var.enable_dynamic_dns ? 1 : 0
+  count     = var.ENABLE_DYNAMIC_DNS ? 1 : 0
   topic_arn = aws_sns_topic.jenkins_asg_notifications.arn
   protocol  = "lambda"
   endpoint  = aws_lambda_function.update_route53[0].arn
@@ -391,16 +440,16 @@ resource "random_string" "suffix" {
 
 # Route 53
 data "aws_route53_zone" "jenkins" {
-  name         = var.domain_name
+  name         = var.DOMAIN_NAME
   private_zone = false
 }
 
 resource "aws_route53_record" "jenkins" {
   zone_id = data.aws_route53_zone.jenkins.zone_id
-  name    = "jenkins.${var.domain_name}"
+  name    = "jenkins.${var.DOMAIN_NAME}"
   type    = "A"
   ttl     = 300
-  records = var.enable_dynamic_dns ? ["127.0.0.1"] : length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"]
+  records = var.ENABLE_DYNAMIC_DNS ? ["127.0.0.1"] : length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"]
   depends_on = [aws_autoscaling_group.jenkins_asg]
 }
 
@@ -420,7 +469,7 @@ resource "aws_sns_topic" "jenkins_alarms" {
 resource "aws_sns_topic_subscription" "email" {
   topic_arn = aws_sns_topic.jenkins_alarms.arn
   protocol  = "email"
-  endpoint  = var.alert_email
+  endpoint  = var.ALERT_EMAIL
 }
 
 # CloudWatch Alarms
@@ -467,5 +516,5 @@ data "aws_ami" "amazon_linux" {
 }
 
 output "jenkins_url" {
-  value = var.enable_https ? "https://jenkins.${var.domain_name}" : "http://jenkins.${var.domain_name}:8080"
+  value = var.ENABLE_HTTPS ? "https://jenkins.${var.DOMAIN_NAME}" : "http://jenkins.${var.DOMAIN_NAME}:8080"
 }
