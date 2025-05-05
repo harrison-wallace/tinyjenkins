@@ -256,29 +256,57 @@ resource "null_resource" "instance_refresh" {
 
   provisioner "local-exec" {
     command = <<EOT
-      aws autoscaling start-instance-refresh \
-        --auto-scaling-group-name jenkins-asg \
-        --region ${var.REGION} \
-        --preferences '{"MinHealthyPercentage":100}' || \
-        { echo "Failed to start instance refresh"; exit 1; }
-      # Wait for refresh to complete (up to 15 minutes)
-      for i in {1..90}; do
-        STATUS=$(aws autoscaling describe-instance-refreshes \
+      # Attempt to start instance refresh with retries (up to 3 attempts)
+      for attempt in 1 2 3; do
+        echo "Starting instance refresh attempt $attempt..."
+        REFRESH_ID=$(aws autoscaling start-instance-refresh \
           --auto-scaling-group-name jenkins-asg \
           --region ${var.REGION} \
+          --preferences '{"MinHealthyPercentage":100}' \
+          --query 'InstanceRefreshId' \
+          --output text 2>/dev/null)
+        if [ -n "$REFRESH_ID" ]; then
+          echo "Instance refresh started with ID: $REFRESH_ID"
+          break
+        fi
+        echo "Failed to start instance refresh, retrying in 30 seconds..."
+        sleep 30
+      done
+      if [ -z "$REFRESH_ID" ]; then
+        echo "Failed to start instance refresh after 3 attempts"
+        exit 1
+      fi
+      # Wait for refresh to complete (up to 30 minutes)
+      for i in {1..180}; do
+        STATUS=$(aws autoscaling describe-instance-refreshes \
+          --auto-scaling-group-name jenkins-asg \
+          --instance-refresh-ids $REFRESH_ID \
+          --region ${var.REGION} \
           --query 'InstanceRefreshes[0].Status' \
-          --output text)
+          --output text 2>/dev/null)
         if [ "$STATUS" = "Successful" ]; then
           echo "Instance refresh completed successfully"
           exit 0
         elif [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Failed" ]; then
           echo "Instance refresh $STATUS"
+          # Log failure reason
+          aws autoscaling describe-instance-refreshes \
+            --auto-scaling-group-name jenkins-asg \
+            --instance-refresh-ids $REFRESH_ID \
+            --region ${var.REGION} \
+            --query 'InstanceRefreshes[0].StatusReason' \
+            --output text
           exit 1
         fi
         echo "Waiting for instance refresh... Attempt $i"
         sleep 10
       done
-      echo "Instance refresh timed out after 15 minutes"
+      echo "Instance refresh timed out after 30 minutes"
+      # Log final state
+      aws autoscaling describe-instance-refreshes \
+        --auto-scaling-group-name jenkins-asg \
+        --instance-refresh-ids $REFRESH_ID \
+        --region ${var.REGION}
       exit 1
 EOT
   }
@@ -450,7 +478,7 @@ resource "aws_route53_record" "jenkins" {
   type    = "A"
   ttl     = 300
   records = var.ENABLE_DYNAMIC_DNS ? ["127.0.0.1"] : length(data.aws_instances.jenkins_instances.public_ips) > 0 ? [data.aws_instances.jenkins_instances.public_ips[0]] : ["127.0.0.1"]
-  depends_on = [aws_autoscaling_group.jenkins_asg]
+  depends_on = [aws_autoscaling_group.jenkins_asg, null_resource.instance_refresh, aws_lambda_function.update_route53]
 }
 
 # Fetch Instances Managed by ASG
@@ -458,7 +486,7 @@ data "aws_instances" "jenkins_instances" {
   instance_tags = {
     Name = "Jenkins-Spot"
   }
-  depends_on = [aws_autoscaling_group.jenkins_asg]
+  depends_on = [aws_autoscaling_group.jenkins_asg, null_resource.instance_refresh]
 }
 
 # SNS Topic for CloudWatch Alarms
