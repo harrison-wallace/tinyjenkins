@@ -257,7 +257,8 @@ resource "null_resource" "instance_refresh" {
   provisioner "local-exec" {
     command = <<EOT
       # Attempt to start instance refresh with retries (up to 3 attempts)
-      for attempt in 1 2 3; do
+      attempt=1
+      while [ $attempt -le 3 ]; do
         echo "Starting instance refresh attempt $attempt..."
         REFRESH_ID=$(aws autoscaling start-instance-refresh \
           --auto-scaling-group-name jenkins-asg \
@@ -271,13 +272,15 @@ resource "null_resource" "instance_refresh" {
         fi
         echo "Failed to start instance refresh, retrying in 30 seconds..."
         sleep 30
+        attempt=$((attempt + 1))
       done
       if [ -z "$REFRESH_ID" ]; then
         echo "Failed to start instance refresh after 3 attempts"
         exit 1
       fi
-      # Wait for refresh to complete (up to 30 minutes)
-      for i in {1..180}; do
+      # Wait for refresh to complete (up to 15 minutes)
+      i=1
+      while [ $i -le 90 ]; do
         STATUS=$(aws autoscaling describe-instance-refreshes \
           --auto-scaling-group-name jenkins-asg \
           --instance-refresh-ids $REFRESH_ID \
@@ -289,7 +292,6 @@ resource "null_resource" "instance_refresh" {
           exit 0
         elif [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "Failed" ]; then
           echo "Instance refresh $STATUS"
-          # Log failure reason
           aws autoscaling describe-instance-refreshes \
             --auto-scaling-group-name jenkins-asg \
             --instance-refresh-ids $REFRESH_ID \
@@ -300,9 +302,9 @@ resource "null_resource" "instance_refresh" {
         fi
         echo "Waiting for instance refresh... Attempt $i"
         sleep 10
+        i=$((i + 1))
       done
-      echo "Instance refresh timed out after 30 minutes"
-      # Log final state
+      echo "Instance refresh timed out after 15 minutes"
       aws autoscaling describe-instance-refreshes \
         --auto-scaling-group-name jenkins-asg \
         --instance-refresh-ids $REFRESH_ID \
