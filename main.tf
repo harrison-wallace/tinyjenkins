@@ -57,10 +57,38 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Reference Existing Security Group
-data "aws_security_group" "jenkins_sg" {
-  name   = "jenkins_sg"
-  vpc_id = aws_vpc.main.id
+# Security Group
+resource "aws_security_group" "jenkins_sg" {
+  name        = "jenkins_sg"
+  description = "Allow Jenkins, SSH, and HTTPS access"
+  vpc_id      = aws_vpc.main.id
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_cidr]
+  }
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = var.enable_https ? ["0.0.0.0/0"] : []
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags = {
+    Name = "jenkins-sg"
+  }
 }
 
 # IAM Role for EC2
@@ -83,28 +111,32 @@ resource "aws_iam_role_policy" "jenkins_policy" {
   role = aws_iam_role.jenkins_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "${aws_s3_bucket.backups.arn}",
-          "${aws_s3_bucket.backups.arn}/*"
-        ]
-      },
-      var.enable_https ? {
-        Effect = "Allow"
-        Action = [
-          "acm:ExportCertificate",
-          "acm:DescribeCertificate"
-        ]
-        Resource = [aws_acm_certificate.jenkins[0].arn]
-      } : null
-    ]
+    Statement = concat(
+      [
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:ListBucket"
+          ]
+          Resource = [
+            "${aws_s3_bucket.backups.arn}",
+            "${aws_s3_bucket.backups.arn}/*"
+          ]
+        }
+      ],
+      var.enable_https ? [
+        {
+          Effect = "Allow"
+          Action = [
+            "acm:ExportCertificate",
+            "acm:DescribeCertificate"
+          ]
+          Resource = [aws_acm_certificate.jenkins[0].arn]
+        }
+      ] : []
+    )
   })
 }
 
@@ -152,7 +184,7 @@ resource "aws_launch_template" "jenkins" {
   }
   network_interfaces {
     associate_public_ip_address = true
-    security_groups            = [data.aws_security_group.jenkins_sg.id]
+    security_groups            = [aws_security_group.jenkins_sg.id]
   }
   user_data = base64encode(templatefile("user_data.sh", {
     backup_bucket = aws_s3_bucket.backups.bucket,
