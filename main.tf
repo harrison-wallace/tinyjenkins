@@ -111,28 +111,32 @@ resource "aws_iam_role_policy" "jenkins_policy" {
   role = aws_iam_role.jenkins_role.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "${aws_s3_bucket.backups.arn}",
-          "${aws_s3_bucket.backups.arn}/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "acm:ExportCertificate",
-          "acm:DescribeCertificate"
-        ]
-        Resource = var.enable_https ? [aws_acm_certificate.jenkins[0].arn] : []
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:ListBucket"
+          ]
+          Resource = [
+            "${aws_s3_bucket.backups.arn}",
+            "${aws_s3_bucket.backups.arn}/*"
+          ]
+        }
+      ],
+      var.enable_https ? [
+        {
+          Effect = "Allow"
+          Action = [
+            "acm:ExportCertificate",
+            "acm:DescribeCertificate"
+          ]
+          Resource = [aws_acm_certificate.jenkins[0].arn]
+        }
+      ] : []
+    )
   })
 }
 
