@@ -130,7 +130,7 @@ resource "aws_iam_role_policy" "jenkins_policy" {
           "acm:ExportCertificate",
           "acm:DescribeCertificate"
         ]
-        Resource = var.enable_https ? [aws_acm_certificate.jenkins.arn] : []
+        Resource = var.enable_https ? [aws_acm_certificate.jenkins[0].arn] : []
       }
     ]
   })
@@ -157,16 +157,16 @@ resource "aws_acm_certificate" "jenkins" {
 resource "aws_route53_record" "cert_validation" {
   count   = var.enable_https ? 1 : 0
   zone_id = data.aws_route53_zone.jenkins.zone_id
-  name    = tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_name
-  type    = tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_type
-  records = [tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_value]
+  name    = var.enable_https ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_name : ""
+  type    = var.enable_https ? tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_type : ""
+  records = var.enable_https ? [tolist(aws_acm_certificate.jenkins[0].domain_validation_options)[0].resource_record_value] : []
   ttl     = 60
 }
 
 resource "aws_acm_certificate_validation" "jenkins" {
   count                   = var.enable_https ? 1 : 0
   certificate_arn         = aws_acm_certificate.jenkins[0].arn
-  validation_record_fqdns = [aws_route53_record.cert_validation[0].fqdn]
+  validation_record_fqdns = var.enable_https ? [aws_route53_record.cert_validation[0].fqdn] : []
 }
 
 # Launch Template
@@ -185,7 +185,8 @@ resource "aws_launch_template" "jenkins" {
   user_data = base64encode(templatefile("user_data.sh", {
     backup_bucket = aws_s3_bucket.backups.bucket,
     enable_https  = var.enable_https,
-    cert_arn      = var.enable_https ? aws_acm_certificate.jenkins[0].arn : ""
+    cert_arn      = var.enable_https ? aws_acm_certificate.jenkins[0].arn : "",
+    region        = var.region
   }))
 
   lifecycle {
@@ -425,7 +426,7 @@ resource "aws_cloudwatch_metric_alarm" "cpu_usage" {
   metric_name         = "CPUUtilization"
   namespace           = "AWS/EC2"
   period              = 300
-  statistic           = "<'Average"
+  statistic           = "Average"
   threshold           = 80
   alarm_description   = "Triggers when CPU usage exceeds 80% for 10 minutes"
   alarm_actions       = [aws_sns_topic.jenkins_alarms.arn]
