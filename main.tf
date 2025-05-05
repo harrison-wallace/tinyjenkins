@@ -215,7 +215,7 @@ resource "aws_autoscaling_group" "jenkins_asg" {
   vpc_zone_identifier = [aws_subnet.public.id]
   launch_template {
     id      = aws_launch_template.jenkins.id
-    version = aws_launch_template.jenkins.latest_version
+    version = "$Latest"
   }
   health_check_type         = "EC2"
   health_check_grace_period = 300
