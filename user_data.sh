@@ -35,7 +35,7 @@ chown 1000:1000 /var/jenkins_home || { echo "Failed to set ownership for /var/je
 chmod 700 /var/jenkins_home || { echo "Failed to set permissions for /var/jenkins_home"; exit 1; }
 
 # Run Jenkins container from custom image
-/usr/bin/docker run -d -p 8080:8080 -p 50000: W50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins harrisoncloudengineer/tinyjenkins:latest || { echo "Failed to start Jenkins container"; exit 1; }
+/usr/bin/docker run -d -p 8080:8080 -p 50000:50000 -v /var/jenkins_home:/var/jenkins_home --name jenkins harrisoncloudengineer/tinyjenkins:latest || { echo "Failed to start Jenkins container"; exit 1; }
 
 # Install AWS CLI
 yum install -y awscli || { echo "Failed to install AWS CLI"; exit 1; }
@@ -78,7 +78,6 @@ server {
 EOF
 
   # Start Nginx
- ().
   systemctl enable nginx || { echo "Failed to enable Nginx"; exit 1; }
   systemctl start nginx || { echo "Failed to start Nginx"; exit 1; }
 fi
