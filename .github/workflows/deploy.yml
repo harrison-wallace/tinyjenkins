@@ -39,6 +39,8 @@ jobs:
         TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
         TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
         TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
+        TF_VAR_enable_https: ${{ secrets.TF_VAR_enable_https }}
+        TF_VAR_enable_dynamic_dns: ${{ secrets.TF_VAR_enable_dynamic_dns }}
         TF_LOG: DEBUG
       timeout-minutes: 5
       run: terraform plan -out=tfplan -no-color
@@ -53,6 +55,8 @@ jobs:
         TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
         TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
         TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
+        TF_VAR_enable_https: ${{ secrets.TF_VAR_enable_https }}
+        TF_VAR_enable_dynamic_dns: ${{ secrets.TF_VAR_enable_dynamic_dns }}
       run: terraform apply -auto-approve tfplan
     - name: Mask Sensitive Outputs
       env:
@@ -66,35 +70,41 @@ jobs:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         AWS_REGION: ${{ secrets.TF_VAR_region }}
+        TF_VAR_domain_name: ${{ secrets.TF_VAR_domain_name }}
+        TF_VAR_enable_https: ${{ secrets.TF_VAR_enable_https }}
       timeout-minutes: 15
       run: |
-        # Get instance ID
-        INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=pending,running" --query 'Reservations[0].Instances[0].InstanceId' --output text --no-cli-pager)
-        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
-          echo "No running or pending instance found with tag Name=Jenkins-Spot"
-          exit 1
+        # Determine protocol based on enable_https
+        PROTOCOL="http"
+        PORT=":8080"
+        if [ "${TF_VAR_enable_https}" = "true" ]; then
+          PROTOCOL="https"
+          PORT=""
         fi
-        # Get public IP
-        JENKINS_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
-        if [ -z "$JENKINS_IP" ] || [ "$JENKINS_IP" == "None" ]; then
-          echo "No public IP found for instance $INSTANCE_ID"
-          exit 1
+
+        # Get the current instance IP from ASG
+        INSTANCE_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" \
+          --output text --region ${AWS_REGION} 2>/dev/null || echo "")
+
+        # Use DNS by default, fallback to IP if available
+        JENKINS_URL="${PROTOCOL}://jenkins.${TF_VAR_domain_name}${PORT}"
+        if [ -n "$INSTANCE_IP" ]; then
+          JENKINS_URL="${PROTOCOL}://${INSTANCE_IP}${PORT}"
         fi
-        JENKINS_URL="http://$JENKINS_IP:8080"
+
         echo "Checking Jenkins availability at $JENKINS_URL"
-        echo "Note: The DNS record for http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 may take time to propagate (up to 300 seconds or more)."
-        for i in {1..90}; do
-          RESPONSE=$(curl -s --head "$JENKINS_URL")
-          if echo "$RESPONSE" | grep -E "200 OK|403 Forbidden"; then
-            echo "Jenkins is available at $JENKINS_URL (Response: $(echo "$RESPONSE" | head -n 1))"
-            echo "DNS-based URL: http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 (may require additional propagation time)"
-            break
+        echo "Note: DNS propagation may take up to 300 seconds."
+
+        # Retry check for up to 5 minutes
+        for i in {1..30}; do
+          if curl -s --head "$JENKINS_URL" | grep -E "200 OK|403 Forbidden"; then
+            echo "Jenkins is available"
+            exit 0
           fi
-          echo "Waiting for Jenkins to be available... Attempt $i"
+          echo "Attempt $i: Jenkins not yet available, retrying in 10 seconds..."
           sleep 10
-          if [ $i -eq 90 ]; then
-            echo "Jenkins not available after 15 minutes"
-            echo "Last response: $RESPONSE"
-            exit 1
-          fi
         done
+        echo "Failed to reach Jenkins after 5 minutes"
+        exit 1

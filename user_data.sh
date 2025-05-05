@@ -1,5 +1,5 @@
 #!/bin/bash
-# Log all output to /var/log/user-data.log for debugging
+# Log all output to /var/log/user-data.log for debugging purposes
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
 # Update system and install Docker
