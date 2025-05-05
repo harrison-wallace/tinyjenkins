@@ -186,7 +186,8 @@ resource "aws_launch_template" "jenkins" {
     backup_bucket = aws_s3_bucket.backups.bucket,
     enable_https  = var.enable_https,
     cert_arn      = var.enable_https ? aws_acm_certificate.jenkins[0].arn : "",
-    region        = var.region
+    region        = var.region,
+    domain_name   = var.domain_name
   }))
 
   lifecycle {
