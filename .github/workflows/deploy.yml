@@ -14,33 +14,31 @@ jobs:
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_REGION }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
-        aws s3api head-bucket --bucket ${{ secrets.TF_VAR_STATE_BUCKET }} || { echo "S3 bucket ${{ secrets.TF_VAR_STATE_BUCKET }} not found or inaccessible"; exit 1; }
+        aws s3api head-bucket --bucket ${{ secrets.TF_VAR_state_bucket }} || { echo "S3 bucket ${{ secrets.TF_VAR_state_bucket }} not found or inaccessible"; exit 1; }
     - name: Verify Route 53 Hosted Zone
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_REGION }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
       run: |
-        aws route53 list-hosted-zones-by-name --dns-name ${{ secrets.TF_VAR_DOMAIN_NAME }} | grep -q "HostedZone" || { echo "Route 53 hosted zone for ${{ secrets.TF_VAR_DOMAIN_NAME }} not found"; exit 1; }
+        aws route53 list-hosted-zones-by-name --dns-name ${{ secrets.TF_VAR_domain_name }} | grep -q "HostedZone" || { echo "Route 53 hosted zone for ${{ secrets.TF_VAR_domain_name }} not found"; exit 1; }
     - name: Terraform Init
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      run: terraform init -backend-config="bucket=${{ secrets.TF_VAR_STATE_BUCKET }}" -backend-config="region=${{ secrets.TF_VAR_REGION }}"
+      run: terraform init -backend-config="bucket=${{ secrets.TF_VAR_state_bucket }}" -backend-config="region=${{ secrets.TF_VAR_region }}"
     - name: Terraform Plan
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        TF_VAR_DOMAIN_NAME: ${{ secrets.TF_VAR_DOMAIN_NAME }}
-        TF_VAR_STATE_BUCKET: ${{ secrets.TF_VAR_STATE_BUCKET }}
-        TF_VAR_REGION: ${{ secrets.TF_VAR_REGION }}
-        TF_VAR_KEY_NAME: ${{ secrets.TF_VAR_KEY_NAME }}
-        TF_VAR_ALLOWED_CIDR: ${{ secrets.TF_VAR_ALLOWED_CIDR }}
-        TF_VAR_ALERT_EMAIL: ${{ secrets.TF_VAR_ALERT_EMAIL }}
-        TF_VAR_ENABLE_HTTPS: ${{ secrets.TF_VAR_ENABLE_HTTPS }}
-        TF_VAR_ENABLE_DYNAMIC_DNS: ${{ secrets.TF_VAR_ENABLE_DYNAMIC_DNS }}
+        TF_VAR_domain_name: ${{ secrets.TF_VAR_domain_name }}
+        TF_VAR_state_bucket: ${{ secrets.TF_VAR_state_bucket }}
+        TF_VAR_region: ${{ secrets.TF_VAR_region }}
+        TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
+        TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
+        TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
         TF_LOG: DEBUG
       timeout-minutes: 5
       run: terraform plan -out=tfplan -no-color
@@ -49,14 +47,12 @@ jobs:
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        TF_VAR_DOMAIN_NAME: ${{ secrets.TF_VAR_DOMAIN_NAME }}
-        TF_VAR_STATE_BUCKET: ${{ secrets.TF_VAR_STATE_BUCKET }}
-        TF_VAR_REGION: ${{ secrets.TF_VAR_REGION }}
-        TF_VAR_KEY_NAME: ${{ secrets.TF_VAR_KEY_NAME }}
-        TF_VAR_ALLOWED_CIDR: ${{ secrets.TF_VAR_ALLOWED_CIDR }}
-        TF_VAR_ALERT_EMAIL: ${{ secrets.TF_VAR_ALERT_EMAIL }}
-        TF_VAR_ENABLE_HTTPS: ${{ secrets.TF_VAR_ENABLE_HTTPS }}
-        TF_VAR_ENABLE_DYNAMIC_DNS: ${{ secrets.TF_VAR_ENABLE_DYNAMIC_DNS }}
+        TF_VAR_domain_name: ${{ secrets.TF_VAR_domain_name }}
+        TF_VAR_state_bucket: ${{ secrets.TF_VAR_state_bucket }}
+        TF_VAR_region: ${{ secrets.TF_VAR_region }}
+        TF_VAR_key_name: ${{ secrets.TF_VAR_key_name }}
+        TF_VAR_allowed_cidr: ${{ secrets.TF_VAR_allowed_cidr }}
+        TF_VAR_alert_email: ${{ secrets.TF_VAR_alert_email }}
       run: terraform apply -auto-approve tfplan
     - name: Mask Sensitive Outputs
       env:
@@ -64,47 +60,41 @@ jobs:
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       run: |
         echo "::add-mask::$(terraform output -raw jenkins_url)"
-        echo "::add-mask::${{ secrets.TF_VAR_DOMAIN_NAME }}"
+        echo "::add-mask::${{ secrets.TF_VAR_domain_name }}"
     - name: Verify Jenkins Availability
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        AWS_REGION: ${{ secrets.TF_VAR_REGION }}
-        TF_VAR_DOMAIN_NAME: ${{ secrets.TF_VAR_DOMAIN_NAME }}
-        TF_VAR_ENABLE_HTTPS: ${{ secrets.TF_VAR_ENABLE_HTTPS }}
+        AWS_REGION: ${{ secrets.TF_VAR_region }}
       timeout-minutes: 15
       run: |
-        # Determine protocol based on enable_https
-        PROTOCOL="http"
-        PORT=":8080"
-        if [ "${TF_VAR_ENABLE_HTTPS}" = "true" ]; then
-          PROTOCOL="https"
-          PORT=""
+        # Get instance ID
+        INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=pending,running" --query 'Reservations[0].Instances[0].InstanceId' --output text --no-cli-pager)
+        if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" == "None" ]; then
+          echo "No running or pending instance found with tag Name=Jenkins-Spot"
+          exit 1
         fi
-
-        # Get the current instance IP from ASG
-        INSTANCE_IP=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=Jenkins-Spot" "Name=instance-state-name,Values=running" \
-          --query "Reservations[0].Instances[0].PublicIpAddress" \
-          --output text --region ${AWS_REGION} 2>/dev/null || echo "")
-
-        # Use DNS by default, fallback to IP if available
-        JENKINS_URL="${PROTOCOL}://jenkins.${TF_VAR_DOMAIN_NAME}${PORT}"
-        if [ -n "$INSTANCE_IP" ]; then
-          JENKINS_URL="${PROTOCOL}://${INSTANCE_IP}${PORT}"
+        # Get public IP
+        JENKINS_IP=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query 'Reservations[0].Instances[0].PublicIpAddress' --output text --no-cli-pager)
+        if [ -z "$JENKINS_IP" ] || [ "$JENKINS_IP" == "None" ]; then
+          echo "No public IP found for instance $INSTANCE_ID"
+          exit 1
         fi
-
+        JENKINS_URL="http://$JENKINS_IP:8080"
         echo "Checking Jenkins availability at $JENKINS_URL"
-        echo "Note: DNS propagation may take up to 300 seconds."
-
-        # Retry check for up to 5 minutes
-        for i in {1..30}; do
-          if curl -s --head "$JENKINS_URL" | grep -E "200 OK|403 Forbidden"; then
-            echo "Jenkins is available"
-            exit 0
+        echo "Note: The DNS record for http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 may take time to propagate (up to 300 seconds or more)."
+        for i in {1..90}; do
+          RESPONSE=$(curl -s --head "$JENKINS_URL")
+          if echo "$RESPONSE" | grep -E "200 OK|403 Forbidden"; then
+            echo "Jenkins is available at $JENKINS_URL (Response: $(echo "$RESPONSE" | head -n 1))"
+            echo "DNS-based URL: http://jenkins.${{ secrets.TF_VAR_domain_name }}:8080 (may require additional propagation time)"
+            break
           fi
-          echo "Attempt $i: Jenkins not yet available, retrying in 10 seconds..."
+          echo "Waiting for Jenkins to be available... Attempt $i"
           sleep 10
+          if [ $i -eq 90 ]; then
+            echo "Jenkins not available after 15 minutes"
+            echo "Last response: $RESPONSE"
+            exit 1
+          fi
         done
-        echo "Failed to reach Jenkins after 5 minutes"
-        exit 1
